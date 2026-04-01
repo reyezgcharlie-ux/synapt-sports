@@ -1,77 +1,116 @@
-// SYNAPT Sports API — SportRadar via RapidAPI (funciona desde servidores)
-// Alternativa: TheSportsDB gratuita sin bloqueos
+// SYNAPT Sports API — TheSportsDB con parametros correctos
 
-const SPORTSDB = "https://www.thesportsdb.com/api/v1/json/3";
+const LEAGUES = [
+  { name: "NBA", emoji: "🏀" },
+  { name: "MLB", emoji: "⚾" },
+  { name: "NFL", emoji: "🏈" },
+  { name: "NHL", emoji: "🏒" },
+  { name: "MLS", emoji: "⚽" }
+];
 
-async function getTodayEvents(leagueId, emoji, label) {
+async function getTodayGames(leagueName, emoji) {
   try {
-    var today = new Date().toISOString().split("T")[0];
-    var url = SPORTSDB + "/eventsday.php?d=" + today + "&l=" + leagueId;
-    var res = await fetch(url, {
-      headers: { "User-Agent": "SYNAPT/1.0" }
-    });
+    // Fecha de hoy en formato YYYY-MM-DD
+    var now = new Date();
+    var y = now.getFullYear();
+    var m = String(now.getMonth() + 1).padStart(2, "0");
+    var d = String(now.getDate()).padStart(2, "0");
+    var dateStr = y + "-" + m + "-" + d;
+
+    // TheSportsDB free — key "3", eventsday con nombre de liga
+    var url = "https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=" + dateStr + "&l=" + leagueName;
+    var res = await fetch(url, { headers: { "User-Agent": "SYNAPT/1.0" } });
     if (!res.ok) return null;
     var data = await res.json();
     var events = data.events || [];
     if (!events.length) return null;
 
     var lines = events.slice(0, 8).map(function(e) {
-      var home = e.strHomeTeam || "Home";
-      var away = e.strAwayTeam || "Away";
-      var homeScore = e.intHomeScore;
-      var awayScore = e.intAwayScore;
-      var status = e.strStatus || "";
+      var home = e.strHomeTeam || "";
+      var away = e.strAwayTeam || "";
+      var hs = e.intHomeScore;
+      var as = e.intAwayScore;
 
-      if (homeScore !== null && homeScore !== "" && awayScore !== null && awayScore !== "") {
-        var hs = parseInt(homeScore) || 0;
-        var as = parseInt(awayScore) || 0;
-        var winner = hs > as ? home : (as > hs ? away : "Empate");
-        return emoji + " " + away + " " + awayScore + " - " + homeScore + " " + home + (winner !== "Empate" ? "  V " + winner : "  Empate");
+      if (hs !== null && hs !== "" && as !== null && as !== "") {
+        var h = parseInt(hs) || 0;
+        var a = parseInt(as) || 0;
+        var winner = h > a ? home : (a > h ? away : "");
+        return emoji + " " + away + " " + as + " - " + hs + " " + home + (winner ? "  W " + winner : "  Empate");
       } else {
-        var time = e.strTime ? e.strTime.substring(0,5) : (e.strProgress || "");
-        if (status === "NS" || !status) {
-          return emoji + " " + away + " vs " + home + (time ? "  " + time : "");
-        } else {
-          return emoji + " " + away + " vs " + home + "  " + status;
-        }
+        var time = (e.strTime || "").substring(0, 5);
+        return emoji + " " + away + " vs " + home + (time ? "  " + time : "");
       }
     }).filter(Boolean);
 
     if (!lines.length) return null;
-    return emoji + " " + label + "\n" + lines.join("\n");
-  } catch(e) {
+    return emoji + " " + leagueName + "\n" + lines.join("\n");
+  } catch(err) {
     return null;
   }
 }
 
-// IDs de TheSportsDB para cada liga
-// NBA=4387, MLB=4424, NFL=4391, NHL=4380, MLS=4346
-var LEAGUES = [
-  { id: "4387", emoji: "🏀", label: "NBA" },
-  { id: "4424", emoji: "⚾", label: "MLB" },
-  { id: "4391", emoji: "🏈", label: "NFL" },
-  { id: "4380", emoji: "🏒", label: "NHL" },
-  { id: "4346", emoji: "⚽", label: "MLS" }
-];
+// También intentamos ayer por si los juegos de anoche no están en "hoy"
+async function getYesterdayGames(leagueName, emoji) {
+  try {
+    var now = new Date();
+    now.setDate(now.getDate() - 1);
+    var y = now.getFullYear();
+    var m = String(now.getMonth() + 1).padStart(2, "0");
+    var d = String(now.getDate()).padStart(2, "0");
+    var dateStr = y + "-" + m + "-" + d;
+
+    var url = "https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=" + dateStr + "&l=" + leagueName;
+    var res = await fetch(url, { headers: { "User-Agent": "SYNAPT/1.0" } });
+    if (!res.ok) return null;
+    var data = await res.json();
+    var events = (data.events || []).filter(function(e) {
+      return e.intHomeScore !== null && e.intHomeScore !== "";
+    });
+    if (!events.length) return null;
+
+    var lines = events.slice(0, 6).map(function(e) {
+      var home = e.strHomeTeam || "";
+      var away = e.strAwayTeam || "";
+      var hs = e.intHomeScore;
+      var as = e.intAwayScore;
+      var h = parseInt(hs) || 0;
+      var a = parseInt(as) || 0;
+      var winner = h > a ? home : (a > h ? away : "");
+      return emoji + " " + away + " " + as + " - " + hs + " " + home + (winner ? "  W " + winner : "  Empate");
+    }).filter(Boolean);
+
+    if (!lines.length) return null;
+    return emoji + " " + leagueName + " (ayer)\n" + lines.join("\n");
+  } catch(err) {
+    return null;
+  }
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Content-Type", "application/json");
 
-  var today = new Date().toLocaleDateString("es-MX", {
+  var now = new Date();
+  var today = now.toLocaleDateString("es-MX", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
     timeZone: "America/Mexico_City"
   });
   var todayUpper = today.charAt(0).toUpperCase() + today.slice(1);
 
-  var results = await Promise.all(
-    LEAGUES.map(function(l) { return getTodayEvents(l.id, l.emoji, l.label); })
-  );
-  var sections = results.filter(Boolean);
+  // Intentar hoy primero, si vacío intentar ayer
+  var sections = [];
+  for (var i = 0; i < LEAGUES.length; i++) {
+    var l = LEAGUES[i];
+    var result = await getTodayGames(l.name, l.emoji);
+    if (!result) {
+      result = await getYesterdayGames(l.name, l.emoji);
+    }
+    if (result) sections.push(result);
+  }
 
   var parts = ["🏆 RESUMEN DEPORTIVO — " + todayUpper];
   sections.forEach(function(s) { parts.push(s); });
-  if (!sections.length) parts.push("Sin juegos programados para hoy.");
+  if (!sections.length) parts.push("Sin juegos recientes disponibles.");
   parts.push("__________\nSYNAPT.LIVE | @SynaptLiveOfficial\n#Deportes #NBA #MLB #NHL #MLS #SynaptLive");
 
   var fullText = parts.join("\n\n");
@@ -81,10 +120,9 @@ module.exports = async function handler(req, res) {
     telegram: fullText.substring(0, 4096),
     facebook: fullText.substring(0, 2000),
     hasGames: sections.length > 0,
-    date: todayUpper,
     debug: {
-      sectionsFound: sections.length,
-      leagues: results.map(function(r, i) { return { league: LEAGUES[i].label, found: !!r }; })
+      date: todayUpper,
+      sectionsFound: sections.length
     }
   });
 };
